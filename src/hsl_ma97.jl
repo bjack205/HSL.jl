@@ -11,6 +11,16 @@ export Ma97Exception
 const Ma97Data = Union{Float32, Float64, ComplexF32, ComplexF64}
 const Ma97Real = Union{Cfloat, Cdouble}
 
+const VecOrNull{T} = Union{Vector{T},Ptr{Cvoid}}
+
+struct AKeep
+  ptr::Vector{Ptr{Cvoid}}
+end
+
+struct FKeep
+  ptr::Vector{Ptr{Cvoid}}
+end
+
 
 """# Main control type for MA97.
 
@@ -262,10 +272,6 @@ for (fname, typ) in ((:ma97_finalise_s, Float32),
   end
 end
 
-struct AKeep
-  ptr::Vector{Ptr{Cvoid}}
-end
-
 for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
                                ("ma97_analyse_d", :ma97_free_akeep_d, Float64),
                                (:ma97_analyse_c, :ma97_free_akeep_c, ComplexF32),
@@ -389,6 +395,20 @@ for (fname, typ) in ((:ma97_factor_s, Float32),
       end
     end
 
+    function ma97_factor(matrix_type::Int, ptr::VecOrNull{Cint}, row::VecOrNull{Cint}, 
+      val::Vector{$typ}, akeep::AKeep, fkeep::FKeep,
+      control::Ma97_Control, info::Ma97_Info, scale::VecOrNull{Float64},
+    )
+
+      ccall(($(string(fname)), libhsl_ma97), Nothing,
+            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info}, Ptr{$(data_map[typ])}),
+             matrix_type, ptr, row,        val,         akeep.ptr,        fkeep.ptr,   control,      info,   scale)
+
+      if info.flag < 0
+        # ma97_finalize(ma97)
+        throw(Ma97Exception("Ma97: Error during numerical factorization", info.flag))
+      end
+    end
   end
 end
 
@@ -430,6 +450,23 @@ for (fname, typ) in ((:ma97_solve_s, Float32),
       if ma97.info.flag < 0
         ma97_finalize(ma97)
         throw(Ma97Exception("Ma97: Error during solve", ma97.info.flag))
+      end
+    end
+
+    function ma97_solve(job::Integer, x::Array{$typ}, akeep::AKeep, fkeep::FKeep,
+      control::Ma97_Control, info::Ma97_Info
+    )
+      # size(x, 1) == ma97.n || throw(Ma97Exception("Ma97: rhs size mismatch", 0))
+      nrhs = size(x, 2)
+      ldx = size(x,1)
+
+      ccall(($(string(fname)), libhsl_ma97), Nothing,
+            (Cint, Cint, Ref{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info}),
+             job,  nrhs, x,         ldx,   akeep.ptr,   fkeep.ptr,   control,      info)
+
+      if info.flag < 0
+        # ma97_finalize(ma97)
+        throw(Ma97Exception("Ma97: Error during solve", info.flag))
       end
     end
 
