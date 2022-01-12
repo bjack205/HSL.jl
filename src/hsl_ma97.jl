@@ -92,13 +92,13 @@ mutable struct Ma97_Control{T <: Ma97Real}
                   zeros(Cint, 5), zeros(T, 10))
 
     if T == Float32
-      ccall((:ma97_default_control_s, libhsl_ma97), Nothing, (Ref{Ma97_Control},), control)
+      ccall((:ma97_default_control_s, libhsl_ma97), Nothing, (Ref{Ma97_Control{Float32}},), control)
     elseif T == Float64
-      ccall((:ma97_default_control_d, libhsl_ma97), Nothing, (Ref{Ma97_Control},), control)
+      ccall((:ma97_default_control_d, libhsl_ma97), Nothing, (Ref{Ma97_Control{Float64}},), control)
     elseif T == ComplexF32
-      ccall((:ma97_default_control_c, libhsl_ma97), Nothing, (Ref{Ma97_Control},), control)
+      ccall((:ma97_default_control_c, libhsl_ma97), Nothing, (Ref{Ma97_Control{Float32}},), control)
     elseif T == ComplexF64
-      ccall((:ma97_default_control_z, libhsl_ma97), Nothing, (Ref{Ma97_Control},), control)
+      ccall((:ma97_default_control_z, libhsl_ma97), Nothing, (Ref{Ma97_Control{Float64}},), control)
     end
     control.f_arrays = 1  # Use 1-based indexing for arrays, avoiding copies.
     control.print_level = print_level
@@ -286,7 +286,7 @@ for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
 
       # Perform symbolic analysis.
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{Cint}),
+            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
              1,    M.n,  M.colptr,  M.rowval,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
 
       if M.info.flag < 0
@@ -305,7 +305,7 @@ for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
       )
       # Perform symbolic analysis.
       ccall(($fname, libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{Cint}),
+            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
              check,    n,  ptr,        row,  val,    akeep.ptr,      control,         info,         order)
 
       if info.flag < 0
@@ -359,7 +359,7 @@ for (fname, freename, typ) in ((:ma97_analyse_coord_s, :ma97_free_akeep_s, Float
 
       # Perform symbolic analysis.
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{Cint}),
+            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
              M.n,  nz,   M.rowval,  M.colptr,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
 
       if M.info.flag < 0
@@ -386,7 +386,7 @@ for (fname, typ) in ((:ma97_factor_s, Float32),
       t = matrix_types97[matrix_type]
 
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{$(data_map[typ])}),
+            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
              t,    C_NULL,    C_NULL,    ma97.nzval, ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info,   C_NULL)
 
       if ma97.info.flag < 0
@@ -401,7 +401,7 @@ for (fname, typ) in ((:ma97_factor_s, Float32),
     )
 
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info}, Ptr{$(data_map[typ])}),
+            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
              matrix_type, ptr, row,        val,         akeep.ptr,        fkeep.ptr,   control,      info,   scale)
 
       if info.flag < 0
@@ -444,7 +444,7 @@ for (fname, typ) in ((:ma97_solve_s, Float32),
 
       j = jobs97[job]
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}),
+            (Cint, Cint, Ptr{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}),
              j,    nrhs, b,         ma97.n, ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info)
 
       if ma97.info.flag < 0
@@ -461,7 +461,7 @@ for (fname, typ) in ((:ma97_solve_s, Float32),
       ldx = size(x,1)
 
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ref{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info}),
+            (Cint, Cint, Ref{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}),
              job,  nrhs, x,         ldx,   akeep.ptr,   fkeep.ptr,   control,      info)
 
       if info.flag < 0
@@ -502,7 +502,7 @@ for (fname, typ) in ((:ma97_factor_solve_s, Float32),
       size(b, 1) == M.n || throw(Ma97Exception("Ma97: rhs size mismatch", 0))
       nrhs = size(b, 2)
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Cint, Ptr{$typ}, Cint, Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{$(data_map[typ])}),
+            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Cint, Ptr{$typ}, Cint, Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
              t,    M.colptr,  M.rowval,  M.nzval,   nrhs, b,         M.n,  M.__akeep,      M.__fkeep,      M.control,      M.info,      C_NULL)
 
       if M.info.flag < 0
@@ -533,13 +533,13 @@ for (indef, posdef, typ) in ((:ma97_enquire_indef_s, :ma97_enquire_posdef_s, Flo
         # documentation says d should be n x 2, we must declare 2 x n.
         d = zeros($typ, 2, ma97.n)
         ccall(($(string(indef)), libhsl_ma97), Nothing,
-              (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{Cint}, Ptr{$typ}),
+              (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}, Ptr{$typ}),
                ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info,      piv_order, d)
         ret = (piv_order, d)
       else
         d = zeros($typ, ma97.n)
         ccall(($(string(posdef)), libhsl_ma97), Nothing,
-              (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}, Ptr{$typ}),
+              (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$typ}),
                ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info,      d)
         ret = d
       end
@@ -569,7 +569,7 @@ for (fname, typ) in ((:ma97_alter_s, Float32),
       n, m = size(d)
       (m == ma97.n && n == 2) || throw(Ma97Exception("Ma97: input array d must be n x 2", 0))
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Ptr{$typ}, Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control}, Ref{Ma97_Info}),
+            (Ptr{$typ}, Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}),
              d,         ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info)
 
       if ma97.info.flag < 0
