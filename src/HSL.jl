@@ -21,6 +21,12 @@ const data_map = Dict{Type, Type}(Float32 => Cfloat,
                                   ComplexF32 => Cfloat,
                                   ComplexF64 => Cdouble)
 
+hslrealtype(::Type{Float64}) = Float64
+hslrealtype(::Type{Float32}) = Float32
+hslrealtype(::Type{ComplexF32}) = Float32
+hslrealtype(::Type{ComplexF64}) = Float64
+hslrealtype(::Type{T}) where T = error("$T not supported by HSL.")
+
 # package-specific definitions
 if (@isdefined libhsl_ma57) || haskey(ENV, "DOCUMENTER_KEY")
   include("hsl_ma57.jl")

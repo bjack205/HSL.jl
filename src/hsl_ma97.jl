@@ -16,15 +16,25 @@ const VecOrNull{T} = Union{Vector{T},Ptr{Cvoid}}
 struct AKeep
   ptr::Vector{Ptr{Cvoid}}
 end
+@inline Base.cconvert(::Ref{Ptr{Cvoid}}, akeep::AKeep) = akeep.ptr
+AKeep() = AKeep([C_NULL])
+isnull(akeep::AKeep) = akeep.ptr[1] == C_NULL
 
 struct FKeep
   ptr::Vector{Ptr{Cvoid}}
 end
+@inline Base.cconvert(::Ref{Ptr{Cvoid}}, fkeep::FKeep) = fkeep.ptr
+FKeep() = FKeep([C_NULL])
+isnull(fkeep::FKeep) = fkeep.ptr[1] == C_NULL
 
 
 """# Main control type for MA97.
 
-    Ma97_Control(; kwargs...)
+    Ma97_Control{T}(; kwargs...)
+    Ma97_Control(T)
+
+If the type `T` is passed in as an argument, any type supported by HSL will be converted 
+to it's corresponding real type.
 
 ## Keyword arguments:
 
@@ -108,7 +118,7 @@ mutable struct Ma97_Control{T <: Ma97Real}
     return control
   end
 end
-
+Ma97_Control(::Type{T}) where T = Ma97_Control{hslrealtype(T)}()
 
 const orderings97 = Dict{Symbol,Int}(
                       :user  => 0,
@@ -163,8 +173,13 @@ end
 """# Main info type for MA97
 
     info = Ma97_Info{T <: Ma97Real}()
+    info = Ma97_Info(T)
 
 An `info` variable is used to collect statistics on the analysis, factorization and solve.
+
+If the type `T` is passed in as an argument, any type supported by HSL will be converted 
+to it's corresponding real type.
+
 """
 mutable struct Ma97_Info{T <: Ma97Real}
   "exit status"
@@ -228,6 +243,7 @@ mutable struct Ma97_Info{T <: Ma97Real}
                zeros(Cint, 5), zeros(T, 10))
   end
 end
+Ma97_Info(::Type{T}) where T = Ma97_Info{hslrealtype(T)}()
 
 
 # in the Ma97 type, we need to maintain a constraint on the types
