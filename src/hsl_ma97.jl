@@ -258,26 +258,27 @@ mutable struct Ma97{T <: Ma97Data, S <: Ma97Real}
   __akeep::AKeep
   __fkeep::FKeep 
   n::Int
-  colptr::Vector{Cint}
-  rowval::Vector{Cint}
+  col::Vector{Cint}
+  row::Vector{Cint}
   nzval::Vector{T}
   control::Ma97_Control{S}
   info::Ma97_Info{S}
+  # iscoord::Bool  # are colptr and rowval in coordinate format
 
-  function Ma97{T, S}(n::Int, colptr::Vector{Cint}, rowval::Vector{Cint}, nzval::Vector{T},
+  function Ma97{T, S}(n::Int, col::Vector{Cint}, row::Vector{Cint}, nzval::Vector{T},
                       control::Ma97_Control{S}, info::Ma97_Info{S}) where {T, S}
     nzeros = length(nzval)
-    if !isempty(colptr)
-      @assert length(colptr) == n+1
+    if !isempty(col)
+      @assert length(col) == n+1
       @assert length(nzval) == nzeros
-      @assert colptr[end] == nzeros+1
+      @assert col[end] == nzeros+1
     end
     __akeep = AKeep()
     __fkeep = FKeep()
 
     t = eltype(nzval)
     S == data_map[t] || throw(TypeError(:Ma97, "Ma97{$T, $S}\n", data_map[t], t))
-    new(__akeep, __fkeep, n, colptr, rowval, nzval, control, info)
+    new(__akeep, __fkeep, n, col, row, nzval, control, info)
   end
 end
 
@@ -321,8 +322,8 @@ Ma97(A::Array{T,2}; kwargs...) where {T <: Ma97Data} = Ma97(sparse(A); kwargs...
 # Basic info
 isanalysisdone(ma97::Ma97) = !isnull(ma97.__akeep)
 isfactorisedone(ma97::Ma97) = !isnull(ma97.__fkeep)
-SparseArrays.getcolptr(M::Ma97) = isempty(M.colptr) ? C_NULL : M.colptr
-SparseArrays.getrowval(M::Ma97) = isempty(M.rowval) ? C_NULL : M.rowval
+SparseArrays.getcolptr(M::Ma97) = isempty(M.col) ? C_NULL : M.col
+SparseArrays.getrowval(M::Ma97) = isempty(M.row) ? C_NULL : M.row
 
 # Memory management methods
 ma97_free_akeep(M::Ma97{T}) where T = ma97_free_akeep(T, M.__akeep)
@@ -346,7 +347,7 @@ function ma97_analyse(M::Ma97{T}; check=true, order::VecOrNull{Cint}=C_NULL) whe
   if order !=C_NULL 
     @assert length(order) == M.n
   end
-  ma97_analyse(T, check, M.n, M.colptr, M.rowval, M.nzval, M.__akeep, M.control, M.info, order)
+  ma97_analyse(T, check, M.n, M.col, M.row, M.nzval, M.__akeep, M.control, M.info, order)
 end
 
 # Old method
@@ -357,7 +358,7 @@ function ma97_csc(n :: Int, colptr :: Vector{Cint}, rowval :: Vector{Cint}, nzva
   M = Ma97{T, D}(n, colptr, rowval, nzval, control, info)
 
   # Perform symbolic analysis.
-  ma97_analyse(T, true, M.n, M.colptr, M.rowval, C_NULL, M.__akeep, M.control, M.info, C_NULL)
+  ma97_analyse(T, true, M.n, M.col, M.row, C_NULL, M.__akeep, M.control, M.info, C_NULL)
 
   finalizer(ma97_finalize, M)
   return M
@@ -465,9 +466,9 @@ for (fname, typ) in ((:ma97_finalise_s, Float32),
 end
 
 for (fname, typ) in ((:ma97_analyse_s, Float32),
-                               (:ma97_analyse_d, Float64),
-                               (:ma97_analyse_c, ComplexF32),
-                               (:ma97_analyse_z, ComplexF64))
+                     (:ma97_analyse_d, Float64),
+                     (:ma97_analyse_c, ComplexF32),
+                     (:ma97_analyse_z, ComplexF64))
   S = hslrealtype(typ)
   @eval begin
 
@@ -513,7 +514,7 @@ for (fname, typ) in ((:ma97_analyse_coord_s, Float32),
       # Perform symbolic analysis.
       ccall(($(string(fname)), libhsl_ma97), Nothing,
             (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ref{Ptr{Nothing}}, Ref{Ma97_Control{$S}}, Ref{Ma97_Info{$S}}, Ptr{Cint}),
-             M.n,  nz,   M.rowval,  M.colptr,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
+             M.n,  nz,   M.rowval,  M.col,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
 
       if M.info.flag < 0
         ma97_free_akeep($typ, akeep)
