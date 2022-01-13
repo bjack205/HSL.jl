@@ -262,12 +262,9 @@ for (fname, typ) in ((:ma97_finalise_s, Float32),
   end
 end
 
-struct AKeep
-  ptr::Vector{Ptr{Cvoid}}
-end
 
 for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
-                               ("ma97_analyse_d", :ma97_free_akeep_d, Float64),
+                               (:ma97_analyse_d, :ma97_free_akeep_d, Float64),
                                (:ma97_analyse_c, :ma97_free_akeep_c, ComplexF32),
                                (:ma97_analyse_z, :ma97_free_akeep_z, ComplexF64))
 
@@ -290,23 +287,6 @@ for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
 
       finalizer(ma97_finalize, M)
       return M
-    end
-
-    function ma97_analyse(check::Bool, n::Int, ptr::Vector{<:Integer}, 
-        row::Vector{<:Integer}, val::Union{Vector{$typ},Ptr{Cvoid}},
-        akeep::AKeep,  control::Ma97_Control, info::Ma97_Info, 
-        order::Union{Vector{<:Integer},Ptr{Cvoid}}=C_NULL,
-      )
-      # Perform symbolic analysis.
-      ccall(($fname, libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
-             check,    n,  ptr,        row,  val,    akeep.ptr,      control,         info,         order)
-
-      if info.flag < 0
-        throw(Ma97Exception("Ma97: Error during symbolic analysis", info.flag))
-      end
-
-      return nothing
     end
 
   end
