@@ -13,17 +13,21 @@ const Ma97Real = Union{Cfloat, Cdouble}
 
 const VecOrNull{T} = Union{Vector{T},Ptr{Cvoid}}
 
+using SparseArrays: getcolptr, getrowval 
+
 struct AKeep
   ptr::Vector{Ptr{Cvoid}}
 end
-@inline Base.cconvert(::Ref{Ptr{Cvoid}}, akeep::AKeep) = akeep.ptr
+@inline Base.cconvert(::Type{Ref{Ptr{Cvoid}}}, akeep::AKeep) = akeep.ptr
+@inline Base.unsafe_convert(::Type{Ptr{Ptr{Cvoid}}}, akeep::AKeep) = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, akeep.ptr)
 AKeep() = AKeep([C_NULL])
 isnull(akeep::AKeep) = akeep.ptr[1] == C_NULL
 
 struct FKeep
   ptr::Vector{Ptr{Cvoid}}
 end
-@inline Base.cconvert(::Ref{Ptr{Cvoid}}, fkeep::FKeep) = fkeep.ptr
+@inline Base.cconvert(::Type{Ref{Ptr{Cvoid}}}, fkeep::FKeep) = fkeep.ptr
+@inline Base.unsafe_convert(::Type{Ptr{Ptr{Cvoid}}}, fkeep::FKeep) = Base.unsafe_convert(Ptr{Ptr{Cvoid}}, fkeep.ptr)
 FKeep() = FKeep([C_NULL])
 isnull(fkeep::FKeep) = fkeep.ptr[1] == C_NULL
 
@@ -251,94 +255,35 @@ Ma97_Info(::Type{T}) where T = Ma97_Info{hslrealtype(T)}()
 # https://groups.google.com/d/msg/julia-users/JNQ3eBUL3QU/gqAfij6bAgAJ
 
 mutable struct Ma97{T <: Ma97Data, S <: Ma97Real}
-  __akeep :: Array{Ptr{Nothing}}
-  __fkeep :: Array{Ptr{Nothing}}
-  n :: Int
-  colptr :: Vector{Cint}
-  rowval :: Vector{Cint}
-  nzval :: Vector{T}
-  control :: Ma97_Control{S}
-  info :: Ma97_Info{S}
+  __akeep::AKeep
+  __fkeep::FKeep 
+  n::Int
+  colptr::Vector{Cint}
+  rowval::Vector{Cint}
+  nzval::Vector{T}
+  control::Ma97_Control{S}
+  info::Ma97_Info{S}
 
-  function Ma97{T, S}(
-    a :: Array{Ptr{Nothing}}, f :: Array{Ptr{Nothing}}, n :: Int,
-    colptr :: Vector{Cint}, rowval :: Vector{Cint}, nzval :: Vector{T},
-    control :: Ma97_Control{S}, info :: Ma97_Info{S}) where {T, S}
+  function Ma97{T, S}(n::Int, colptr::Vector{Cint}, rowval::Vector{Cint}, nzval::Vector{T},
+                      control::Ma97_Control{S}, info::Ma97_Info{S}) where {T, S}
+    nzeros = length(nzval)
+    if !isempty(colptr)
+      @assert length(colptr) == n+1
+      @assert length(nzval) == nzeros
+      @assert colptr[end] == nzeros+1
+    end
+    __akeep = AKeep()
+    __fkeep = FKeep()
 
     t = eltype(nzval)
     S == data_map[t] || throw(TypeError(:Ma97, "Ma97{$T, $S}\n", data_map[t], t))
-    new(a, f, n, colptr, rowval, nzval, control, info)
+    new(__akeep, __fkeep, n, colptr, rowval, nzval, control, info)
   end
 end
-
-
-for (fname, typ) in ((:ma97_finalise_s, Float32),
-                     (:ma97_finalise_d, Float64),
-                     (:ma97_finalise_c, ComplexF32),
-                     (:ma97_finalise_z, ComplexF64))
-
-  @eval begin
-
-    function ma97_finalize(ma97 :: Ma97{$typ, $(data_map[typ])})
-      ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}),
-             ma97.__akeep,   ma97.__fkeep)
-    end
-
-  end
-end
-
-for (fname, freename, typ) in ((:ma97_analyse_s, :ma97_free_akeep_s, Float32),
-                               ("ma97_analyse_d", :ma97_free_akeep_d, Float64),
-                               (:ma97_analyse_c, :ma97_free_akeep_c, ComplexF32),
-                               (:ma97_analyse_z, :ma97_free_akeep_z, ComplexF64))
-
-  @eval begin
-
-    function ma97_csc(n :: Int, colptr :: Vector{Ti}, rowval :: Vector{Ti}, nzval :: Vector{$typ}; kwargs...) where {Ti <: Integer}
-      control = Ma97_Control{$(data_map[typ])}(; kwargs...)
-      info = Ma97_Info{$(data_map[typ])}()
-      M = Ma97{$typ, $(data_map[typ])}([convert(Ptr{Nothing}, C_NULL)], [convert(Ptr{Nothing}, C_NULL)], n, colptr, rowval, nzval, control, info)
-
-      # Perform symbolic analysis.
-      ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
-             1,    M.n,  M.colptr,  M.rowval,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
-
-      if M.info.flag < 0
-        ccall(($(string(freename)), libhsl_ma97), Nothing, (Ptr{Ptr{Nothing}},), M.__akeep)
-        throw(Ma97Exception("Ma97: Error during symbolic analysis", M.info.flag))
-      end
-
-      finalizer(ma97_finalize, M)
-      return M
-    end
-
-    function ma97_analyse(check::Bool, n::Int, ptr::Vector{<:Integer}, 
-        row::Vector{<:Integer}, val::Union{Vector{$typ},Ptr{Cvoid}},
-        akeep::AKeep,  control::Ma97_Control, info::Ma97_Info, 
-        order::Union{Vector{<:Integer},Ptr{Cvoid}}=C_NULL,
-      )
-      # Perform symbolic analysis.
-      ccall(($fname, libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
-             check,    n,  ptr,        row,  val,    akeep.ptr,      control,         info,         order)
-
-      if info.flag < 0
-        throw(Ma97Exception("Ma97: Error during symbolic analysis", info.flag))
-      end
-
-      return nothing
-    end
-
-  end
-end
-
 
 """# Instantiate and perform symbolic analysis on a sparse Julia matrix
 
     M = Ma97(A; kwargs...)
-
 
 Instantiate an object of type `Ma97` and perform the symbolic analysis on a sparse Julia matrix.
 
@@ -350,36 +295,228 @@ Instantiate an object of type `Ma97` and perform the symbolic analysis on a spar
 
 All keyword arguments are passed directly to `ma97_csc()`.
 """
-function Ma97(A :: SparseMatrixCSC{T,Int}; kwargs...) where {T <: Ma97Data}
-  m, n = size(A)
-  m == n || throw(Ma97Exception("Ma97: input matrix must be square", 0))
-  L = tril(convert(SparseMatrixCSC{T,Cint}, A))
-  return ma97_csc(L.n, L.colptr, L.rowval, L.nzval; kwargs...)
+function Ma97(L::SparseMatrixCSC{T,Ti}; 
+  analyse::Bool=true,
+  control::Ma97_Control{S}=Ma97_Control{data_map[T]}(), 
+  info::Ma97_Info{S}=Ma97_Info{data_map[T]}()
+) where {T,S,Ti}
+  # Convert to lower triangular
+  if !istril(L)
+    L = tril(L)
+  end
+  # Convert to Int32
+  if Ti != Cint
+    L = SparseMatrixCSC{T,Cint}(L)
+  end
+  ma97 = Ma97{T,S}(size(L,1), L.colptr, L.rowval, L.nzval, control, info)
+  if analyse
+    ma97_analyse(ma97)
+  end
+  return ma97
 end
 
-Ma97(A :: Array{T,2}; kwargs...) where {T <: Ma97Data} = Ma97(sparse(A); kwargs...)
+# Convert dense to sparse
+Ma97(A::Array{T,2}; kwargs...) where {T <: Ma97Data} = Ma97(sparse(A); kwargs...)
+
+# Basic info
+isanalysisdone(ma97::Ma97) = !isnull(ma97.__akeep)
+isfactorisedone(ma97::Ma97) = !isnull(ma97.__fkeep)
+SparseArrays.getcolptr(M::Ma97) = isempty(M.colptr) ? C_NULL : M.colptr
+SparseArrays.getrowval(M::Ma97) = isempty(M.rowval) ? C_NULL : M.rowval
+
+# Memory management methods
+ma97_free_akeep(M::Ma97{T}) where T = ma97_free_akeep(T, M.__akeep)
+ma97_free_fkeep(M::Ma97{T}) where T = ma97_free_fkeep(T, M.__fkeep)
+function ma97_finalise(M::Ma97{T}) where T 
+  if !isnull(M.__akeep) && !isnull(M.__fkeep)
+    ma97_finalise(T, M.__akeep, M.__fkeep)
+  elseif !isnull(M.__akeep)
+    ma97_free_akeep(M)
+  elseif !isnull(M.__fkeep)
+    ma97_free_fkeep(M)
+  end
+  return
+end
+@inline ma97_finalize(M::Ma97) = ma97_finalise(M)
+
+##############################
+# Core Methods
+##############################
+function ma97_analyse(M::Ma97{T}; check=true, order::VecOrNull{Cint}=C_NULL) where T
+  if order !=C_NULL 
+    @assert length(order) == M.n
+  end
+  ma97_analyse(T, check, M.n, M.colptr, M.rowval, M.nzval, M.__akeep, M.control, M.info, order)
+end
+
+# Old method
+function ma97_csc(n :: Int, colptr :: Vector{Cint}, rowval :: Vector{Cint}, nzval :: Vector{T}; kwargs...) where {T}
+  D = data_map[T]
+  control = Ma97_Control{D}(; kwargs...)
+  info = Ma97_Info{D}()
+  M = Ma97{T, D}(n, colptr, rowval, nzval, control, info)
+
+  # Perform symbolic analysis.
+  ma97_analyse(T, true, M.n, M.colptr, M.rowval, C_NULL, M.__akeep, M.control, M.info, C_NULL)
+
+  finalizer(ma97_finalize, M)
+  return M
+end
 
 
-for (fname, freename, typ) in ((:ma97_analyse_coord_s, :ma97_free_akeep_s, Float32),
-                               (:ma97_analyse_coord_d, :ma97_free_akeep_d, Float64),
-                               (:ma97_analyse_coord_c, :ma97_free_akeep_c, ComplexF32),
-                               (:ma97_analyse_coord_z, :ma97_free_akeep_z, ComplexF64))
+### Factorization ###
+function ma97_factorize!(M::Ma97; matrix_type::Symbol=:real_indef, 
+                         scale::VecOrNull{Float64}=C_NULL)
+  mt = matrix_types97[matrix_type]
+  ma97_factor(mt, getcolptr(M), getrowval(M), M.nzval, M.__akeep, M.__fkeep, M.control, 
+              M.info, scale)
+end
+
+function ma97_factorize(A::SparseMatrixCSC{T,Int}; matrix_type::Symbol=:real_indef) where {T <: Ma97Data}
+  ma97 = Ma97(A)
+  ma97_factorize!(ma97, matrix_type=matrix_type)
+  return ma97
+end
+
+# Z's not dead.
+@inline ma97_factorise(A::SparseMatrixCSC; kwargs...) = ma97_factorize(M; kwargs...)
+@inline ma97_factorise!(M::Ma97; kwargs...) = ma97_factorize!(M; kwargs...)
+
+### Solve Methods ###
+# In-place solves
+function ma97_solve!(M::Ma97{T}, b::Array{T}; job::Symbol=:A) where {T<:Ma97Data}
+  jobint = jobs97[job]
+  ma97_solve(jobint, b, M.__akeep, M.__fkeep, M.control, M.info)
+end
+
+function ma97_factor_solve!(M::Ma97{T}, b::Array{T}; 
+                            matrix_type::Symbol=:real_indef, 
+                            scale::VecOrNull{Cint}=C_NULL) where {T<:Ma97Data}
+  # jobint = Cint(jobs97[job])
+  mattype = Cint(matrix_types97[matrix_type])
+  ma97_factor_solve(mattype, getcolptr(M), getrowval(M), M.nzval, b, 
+      M.__akeep, M.__fkeep, M.control, M.info, scale)
+end
+
+# Out-of-place solve
+function ma97_solve(ma97::Ma97{T}, b::Array{T}; kwargs...) where {T<:Ma97Data}
+  x = copy(b)
+  ma97_solve!(ma97, x; kwargs...)
+  return x
+end
+
+import Base.\
+\(ma97::Ma97{T}, b::Array{T}) where {T<:Ma97Data} = ma97_solve(ma97, b)
+
+function ma97_solve(A::SparseMatrixCSC{T,<:Integer}, b::Array{T}; 
+                    matrix_type::Symbol=:real_indef,
+                    control::Ma97_Control{S}=Ma97_Control(T),
+                    info::Ma97_Info{S}=Ma97_Info(T)) where {T <: Ma97Data, S <: Ma97Real}
+  (m, n) = size(A)
+  m < n && (return ma97_min_norm(A, b))
+  m > n && (return ma97_least_squares(A, b))
+  M = Ma97(A, control=control, info=info)
+  ma97_solve(M, b, matrix_type=matrix_type)
+end
+
+##############################
+# C Wrapper Functions
+##############################
+for (fname, typ) in ((:ma97_free_akeep_s, Float32),
+                     (:ma97_free_akeep_d, Float64),
+                     (:ma97_free_akeep_c, ComplexF32),
+                     (:ma97_free_akeep_z, ComplexF64))
+  @eval begin
+    function ma97_free_akeep(::Type{$typ}, akeep::AKeep)
+      ccall(($(string(fname)), libhsl_ma97), Nothing, (Ptr{Ptr{Nothing}},), akeep)
+      akeep.ptr[1] = C_NULL  # Make sure the pointer is NULL after freeing
+    end
+  end
+end
+
+for (fname, typ) in ((:ma97_free_fkeep_s, Float32),
+                     (:ma97_free_fkeep_d, Float64),
+                     (:ma97_free_fkeep_c, ComplexF32),
+                     (:ma97_free_fkeep_z, ComplexF64))
+  @eval begin
+    function ma97_free_fkeep(::Type{$typ}, fkeep::FKeep)
+      ccall(($(string(fname)), libhsl_ma97), Nothing, (Ptr{Ptr{Nothing}},), fkeep)
+      fkeep.ptr[1] = C_NULL  # Make sure the pointer is NULL after freeing
+    end
+  end
+end
+
+for (fname, typ) in ((:ma97_finalise_s, Float32),
+                     (:ma97_finalise_d, Float64),
+                     (:ma97_finalise_c, ComplexF32),
+                     (:ma97_finalise_z, ComplexF64))
 
   @eval begin
 
-    function ma97_coord(n :: Int, cols :: Vector{Ti}, rows :: Vector{Ti}, nzval :: Vector{$typ}; kwargs...) where {Ti <: Integer}
-      control = Ma97_Control{$(data_map[typ])}(; kwargs...)
-      info = Ma97_Info{$(data_map[typ])}()
-      M = Ma97{$typ, $(data_map[typ])}([convert(Ptr{Nothing}, C_NULL)], [convert(Ptr{Nothing}, C_NULL)], n, convert(Vector{Cint}, cols), convert(Vector{Cint}, rows), nzval, control, info)
+    function ma97_finalise(::Type{$typ}, akeep::AKeep, fkeep::FKeep)
+      ccall(($(string(fname)), libhsl_ma97), Nothing,
+            (Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}),
+             akeep, fkeep)
+      akeep.ptr[1] = C_NULL  # Make sure the pointer is NULL after freeing
+      fkeep.ptr[1] = C_NULL  # Make sure the pointer is NULL after freeing
+    end
+
+  end
+end
+
+for (fname, typ) in ((:ma97_analyse_s, Float32),
+                               (:ma97_analyse_d, Float64),
+                               (:ma97_analyse_c, ComplexF32),
+                               (:ma97_analyse_z, ComplexF64))
+  S = hslrealtype(typ)
+  @eval begin
+
+    # need to pass in type because the `val` argument which provides the type can be C_NULL
+    function ma97_analyse(::Type{$typ}, check::Bool, n::Int, ptr::Vector{Cint}, 
+        row::Vector{Cint}, val::Union{Vector{$typ},Ptr{Cvoid}},
+        akeep::AKeep,  control::Ma97_Control{$S}, info::Ma97_Info{$S}, 
+        order::VecOrNull{Cint}=C_NULL,
+      )
+      # Perform symbolic analysis.
+      ccall(($(string(fname)), libhsl_ma97), Nothing,
+            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$S}}, Ref{Ma97_Info{$S}}, Ptr{Cint}),
+             check,    n,  ptr,        row,  val,    akeep.ptr,      control,         info,         order)
+
+      if info.flag < 0
+        ma97_free_akeep($typ, akeep)
+        throw(Ma97Exception("Ma97: Error during symbolic analysis", info.flag))
+      end
+
+      return nothing
+    end
+  end
+end
+
+for (fname, typ) in ((:ma97_analyse_coord_s, Float32),
+                     (:ma97_analyse_coord_d, Float64),
+                     (:ma97_analyse_coord_c, ComplexF32),
+                     (:ma97_analyse_coord_z, ComplexF64))
+
+  S = hslrealtype(typ)
+  @eval begin
+
+    function ma97_coord(n::Int, cols::Vector{Ti}, rows::Vector{Ti}, nzval::Vector{$typ}; kwargs...) where {Ti <: Integer}
+      control = Ma97_Control{$S}(; kwargs...)
+      info = Ma97_Info{$S}()
+      nzeros = length(rows)
+      colptr = zeros(Cint, 0)
+      rowvals = zeros(Cint, 0)
+
+      M = Ma97{$typ, $S}(n, colptr, rowvals, nzval, control, info)
       nz = length(cols)
 
       # Perform symbolic analysis.
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{Cint}),
+            (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Ref{Ptr{Nothing}}, Ref{Ma97_Control{$S}}, Ref{Ma97_Info{$S}}, Ptr{Cint}),
              M.n,  nz,   M.rowval,  M.colptr,  C_NULL,    M.__akeep,      M.control,         M.info,         C_NULL)
 
       if M.info.flag < 0
-        ccall(($(string(freename)), libhsl_ma97), Nothing, (Ptr{Ptr{Nothing}},), M.__akeep)
+        ma97_free_akeep($typ, akeep)
         throw(Ma97Exception("Ma97: Error during symbolic analysis", M.info.flag))
       end
 
@@ -396,20 +533,8 @@ for (fname, typ) in ((:ma97_factor_s, Float32),
                      (:ma97_factor_c, ComplexF32),
                      (:ma97_factor_z, ComplexF64))
 
+  S = hslrealtype(typ)
   @eval begin
-
-    function ma97_factorize!(ma97 :: Ma97{$typ, $(data_map[typ])}; matrix_type :: Symbol=:real_indef)
-      t = matrix_types97[matrix_type]
-
-      ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
-             t,    C_NULL,    C_NULL,    ma97.nzval, ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info,   C_NULL)
-
-      if ma97.info.flag < 0
-        ma97_finalize(ma97)
-        throw(Ma97Exception("Ma97: Error during numerical factorization", ma97.info.flag))
-      end
-    end
 
     function ma97_factor(matrix_type::Int, ptr::VecOrNull{Cint}, row::VecOrNull{Cint}, 
       val::Vector{$typ}, akeep::AKeep, fkeep::FKeep,
@@ -417,57 +542,37 @@ for (fname, typ) in ((:ma97_factor_s, Float32),
     )
 
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
+            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ},  Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$S}}, Ref{Ma97_Info{$S}}, Ptr{Cdouble}),
              matrix_type, ptr, row,        val,         akeep.ptr,        fkeep.ptr,   control,      info,   scale)
 
       if info.flag < 0
-        # ma97_finalize(ma97)
+        ma97_free_akeep($typ, akeep)
         throw(Ma97Exception("Ma97: Error during numerical factorization", info.flag))
       end
     end
   end
 end
 
-
-function ma97_factorize(A :: SparseMatrixCSC{T,Int}; matrix_type :: Symbol=:real_indef) where {T <: Ma97Data}
-  ma97 = Ma97(A)
-  ma97_factorize!(ma97, matrix_type=matrix_type)
-  return ma97
-end
-
-# Z's not dead.
-ma97_factorise! = ma97_factorize!
-ma97_factorise = ma97_factorize
-
-
-function ma97_solve(ma97 :: Ma97{T, S}, b :: Array{T}) where {T <: Ma97Data, S <: Ma97Real}
-  x = copy(b)
-  ma97_solve!(ma97, x)
-  return x
-end
-
-
 for (fname, typ) in ((:ma97_solve_s, Float32),
                      (:ma97_solve_d, Float64),
                      (:ma97_solve_c, ComplexF32),
                      (:ma97_solve_z, ComplexF64))
-
   @eval begin
 
-    function ma97_solve!(ma97 :: Ma97{$typ, $(data_map[typ])}, b :: Array{$typ}; job :: Symbol=:A)
-      size(b, 1) == ma97.n || throw(Ma97Exception("Ma97: rhs size mismatch", 0))
-      nrhs = size(b, 2)
+    # function ma97_solve!(ma97 :: Ma97{$typ, $(data_map[typ])}, b :: Array{$typ}; job :: Symbol=:A)
+    #   size(b, 1) == ma97.n || throw(Ma97Exception("Ma97: rhs size mismatch", 0))
+    #   nrhs = size(b, 2)
 
-      j = jobs97[job]
-      ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Cint, Ptr{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}),
-             j,    nrhs, b,         ma97.n, ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info)
+    #   j = jobs97[job]
+    #   ccall(($(string(fname)), libhsl_ma97), Nothing,
+    #         (Cint, Cint, Ptr{$typ}, Cint,   Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}),
+    #          j,    nrhs, b,         ma97.n, ma97.__akeep,   ma97.__fkeep,   ma97.control,      ma97.info)
 
-      if ma97.info.flag < 0
-        ma97_finalize(ma97)
-        throw(Ma97Exception("Ma97: Error during solve", ma97.info.flag))
-      end
-    end
+    #   if ma97.info.flag < 0
+    #     ma97_finalize(ma97)
+    #     throw(Ma97Exception("Ma97: Error during solve", ma97.info.flag))
+    #   end
+    # end
 
     function ma97_solve(job::Integer, x::Array{$typ}, akeep::AKeep, fkeep::FKeep,
       control::Ma97_Control, info::Ma97_Info
@@ -481,7 +586,7 @@ for (fname, typ) in ((:ma97_solve_s, Float32),
              job,  nrhs, x,         ldx,   akeep.ptr,   fkeep.ptr,   control,      info)
 
       if info.flag < 0
-        # ma97_finalize(ma97)
+        ma97_finalise($typ, akeep, fkeep)
         throw(Ma97Exception("Ma97: Error during solve", info.flag))
       end
     end
@@ -490,48 +595,36 @@ for (fname, typ) in ((:ma97_solve_s, Float32),
 end
 
 
-# Overload backslash to solve with MA97.
-import Base.\
-\(ma97 :: Ma97{T,S}, b :: Array{T}) where {T <: Ma97Data, S <: Ma97Real} = ma97_solve(ma97, b)
-
-
-function ma97_solve(A :: SparseMatrixCSC{T,Int}, b :: Array{T}; matrix_type :: Symbol=:real_indef) where {T <: Ma97Data}
-  (m, n) = size(A)
-  m < n && (return ma97_min_norm(A, b))
-  m > n && (return ma97_least_squares(A, b))
-  x = copy(b)
-  ma97_solve!(A, x, matrix_type=matrix_type)
-  return x
-end
-
 
 for (fname, typ) in ((:ma97_factor_solve_s, Float32),
                      (:ma97_factor_solve_d, Float64),
                      (:ma97_factor_solve_c, ComplexF32),
                      (:ma97_factor_solve_z, ComplexF64))
 
+  S = hslrealtype(typ)
   @eval begin
 
-    function ma97_solve!(A :: SparseMatrixCSC{$typ,Int}, b :: Array{$typ}; matrix_type :: Symbol=:real_indef)
-      t = matrix_types97[matrix_type]
-      M = Ma97(A)
-      size(b, 1) == M.n || throw(Ma97Exception("Ma97: rhs size mismatch", 0))
-      nrhs = size(b, 2)
+    function ma97_factor_solve(matrix_type::Cint, ptr::VecOrNull{Cint}, 
+                               row::VecOrNull{Cint}, val::Vector{$typ}, b::Array{$typ}, 
+                               akeep::AKeep, fkeep::FKeep, 
+                               control::Ma97_Control{$S}, 
+                               info::Ma97_Info{$S}, scale::VecOrNull{Cint})
+      nrhs = size(b,2)
+      ldx = size(b,1)
       ccall(($(string(fname)), libhsl_ma97), Nothing,
-            (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{$typ}, Cint, Ptr{$typ}, Cint, Ptr{Ptr{Nothing}}, Ptr{Ptr{Nothing}}, Ref{Ma97_Control{$(data_map[typ])}}, Ref{Ma97_Info{$(data_map[typ])}}, Ptr{$(data_map[typ])}),
-             t,    M.colptr,  M.rowval,  M.nzval,   nrhs, b,         M.n,  M.__akeep,      M.__fkeep,      M.control,      M.info,      C_NULL)
-
-      if M.info.flag < 0
-        ma97_finalize(M)
-        throw(Ma97Exception("Ma97: Error during combined factorize/solve", M.info.flag))
+        (Cint, Ptr{Cint}, Ptr{Cint}, Ref{$typ}, Cint, Ref{$typ}, Cint, Ptr{Ptr{Cvoid}},
+        Ptr{Ptr{Cvoid}}, Ref{Ma97_Control{$S}}, Ref{Ma97_Info{$S}}, Ptr{Cdouble}),
+        matrix_type, ptr, row, val, nrhs, b, ldx, akeep, fkeep, control, info, scale
+      )
+      if info.flag < 0
+        ma97_finalise($typ, akeep, fkeep)
       end
     end
-
   end
 end
 
 
-ma97_solve(A :: Array{T,2}, b :: Array{T}; matrix_type :: Symbol=:real_indef) where {T <: Ma97Data} = ma97_solve(sparse(A), b, matrix_type=matrix_type)
+# ma97_solve(A :: Array{T,2}, b :: Array{T}; matrix_type :: Symbol=:real_indef) where {T <: Ma97Data} = ma97_solve(sparse(A), b, matrix_type=matrix_type)
 
 
 for (indef, posdef, typ) in ((:ma97_enquire_indef_s, :ma97_enquire_posdef_s, Float32),
