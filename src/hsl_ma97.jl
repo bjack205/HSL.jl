@@ -31,6 +31,11 @@ end
 FKeep() = FKeep([C_NULL])
 isnull(fkeep::FKeep) = fkeep.ptr[1] == C_NULL
 
+const ma97alg = getalg(:hsl_ma97)
+const ma97types = getdatatypes(ma97alg)
+const libma97 = getlib(ma97alg)
+
+ma97_checktype(::Type{T}) where T = T ∈ ma97types 
 
 """# Main control type for MA97.
 
